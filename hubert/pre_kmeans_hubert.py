@@ -21,7 +21,10 @@ from audiolm_pytorch.utils import curtail_to_multiple
 
 import logging
 logging.root.setLevel(logging.ERROR)
-
+#from fairseq import checkpoint_utils
+#from fairseq.models.hubert import HubertModel, HubertConfig
+from transformers import HubertModel
+import dataclasses
 
 def exists(val):
     return val is not None
@@ -57,14 +60,20 @@ class CustomHubert(nn.Module):
 
         assert model_path.exists(), f'path {checkpoint_path} does not exist'
 
-        checkpoint = torch.load(checkpoint_path)
-        load_model_input = {checkpoint_path: checkpoint}
-        model, *_ = fairseq.checkpoint_utils.load_model_ensemble_and_task(load_model_input)
-
+        #checkpoint = torch.load(checkpoint_path)
+        #load_model_input = {checkpoint_path: checkpoint}
+        #model, *_ = checkpoint_utils.load_model_ensemble_and_task(load_model_input)
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model = HubertModel.from_pretrained("facebook/hubert-base-ls960")
+        model.load_state_dict(checkpoint,strict=False)
+        #assert False
+        #breakpoint()
+        model.eval()
         if device is not None:
-            model[0].to(device)
+            model.to(device) # model[0].to(device)
 
-        self.model = model[0]
+        #self.model = model[0]
+        self.model = model
         self.model.eval()
 
     @property
@@ -86,14 +95,21 @@ class CustomHubert(nn.Module):
         if exists(self.seq_len_multiple_of):
             wav_input = curtail_to_multiple(wav_input, self.seq_len_multiple_of)
 
+        #embed = self.model(
+        #    wav_input,
+        #    features_only=True,
+        #    mask=False,  # thanks to @maitycyrus for noticing that mask is defaulted to True in the fairseq code
+        #    output_layer=self.output_layer
+        #)
         embed = self.model(
             wav_input,
-            features_only=True,
-            mask=False,  # thanks to @maitycyrus for noticing that mask is defaulted to True in the fairseq code
-            output_layer=self.output_layer
-        )
-
-        embed, packed_shape = pack([embed['x']], '* d')
+            output_hidden_states=True,
+            return_dict=True
+            )
+        #breakpoint()
+        output_layer_index = self.output_layer - 1 # fairseq is 1-based and hf 0-based
+        x = embed.hidden_states[output_layer_index]
+        embed, packed_shape = pack([x], '* d')
 
         # codebook_indices = self.kmeans.predict(embed.cpu().detach().numpy())
 
